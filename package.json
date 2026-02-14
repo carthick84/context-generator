@@ -1,0 +1,72 @@
+{
+  "name": "context-generator",
+  "displayName": "Context Generator",
+  "description": "Generate AI-ready code context from files and folders",
+  "version": "0.0.1",
+  "publisher": "KarthickB",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carthick84/context-generator"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "context-generator.configure",
+        "title": "Context Generator: Configure Settings"
+      },
+      {
+        "command": "context-generator.generateOpenFiles",
+        "title": "Context Generator: Open Files"
+      },
+      {
+        "command": "context-generator.generateFolder",
+        "title": "Context Generator: Selected Folder"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "context-generator.generateFolder",
+          "group": "modification",
+          "when": "explorerResourceIsFolder"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "micromatch": "^4.0.8"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/micromatch": "^4.0.9",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.56.0",
+    "glob": "^10.3.10",
+    "mocha": "^10.3.0",
+    "typescript": "^5.3.3",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.9"
+  }
+}
