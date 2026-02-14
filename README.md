@@ -1,6 +1,15 @@
 # Context Generator
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/carthick84.context-generator?label=VS%20Code%20Marketplace&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=carthick84.context-generator)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/carthick84.context-generator)](https://marketplace.visualstudio.com/items?itemName=carthick84.context-generator)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub](https://img.shields.io/badge/GitHub-carthick84%2Fcontext--generator-blue?logo=github)](https://github.com/carthick84/context-generator)
+
 Generate AI-ready code context from your project files — copy your codebase into a single markdown document ready to paste into Claude, ChatGPT, or any LLM.
+
+## Installation
+
+Install directly from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=carthick84.context-generator), or search **"Context Generator"** in the Extensions sidebar (`Cmd+Shift+X`).
 
 ---
 
@@ -145,6 +154,12 @@ You can then copy the entire document and paste it into your LLM of choice.
 
 ---
 
+## Contributing
+
+Issues and PRs welcome on [GitHub](https://github.com/carthick84/context-generator).
+
+---
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
