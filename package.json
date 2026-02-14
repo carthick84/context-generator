@@ -2,7 +2,7 @@
   "name": "context-generator",
   "displayName": "Context Generator",
   "description": "Generate AI-ready code context from files and folders",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "KarthickB",
   "repository": {
     "type": "git",
