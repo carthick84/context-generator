@@ -1,32 +1,33 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import micromatch from 'micromatch';
+import JSZip from 'jszip';
 
 // --- CONSTANTS: Factory Defaults ---
 const FACTORY_DEFAULT_IGNORES = [
     // Source Control
     '**/.git/**', '**/.gitignore', '**/.gitattributes',
-    
+
     // Dependencies & Locks
     '**/node_modules/**', '**/package-lock.json', '**/yarn.lock', '**/pnpm-lock.yaml', '**/bun.lockb', '**/bun.lock',
-    
+
     // Build / Dist
     '**/dist/electron/**', '**/dist/capacitor/**', '**/build/**', '**/coverage/**', '**/.docker-build-context',
-    
+
     // Python
     '**/__pycache__/**', '**/*.pyc', '**/*.pyo', '**/.venv/**',
-    
+
     // Env & Logs
     '**/.DS_Store', '**/.env', '**/*.log',
-    
+
     // Media / Binary
     '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.webp', '**/*.svg',
     '**/*.ico', '**/*.icns', '**/*.mp4', '**/*.mov', '**/*.avi', '**/*.pdf',
     '**/*.woff', '**/*.woff2', '**/*.ttf', '**/*.eot',
-    
+
     // Mobile
     '**/android/**', '**/ios/**',
-    
+
     // Custom Project Specifics
     '**/images/**', '**/projects/**', '**/thoughts/**', '**/runtime/**',
     '**/*transpiled.mjs', '**/sip-0.21.2.js',
@@ -40,7 +41,7 @@ const FACTORY_DEFAULT_IGNORES = [
 interface Profile {
     name: string;
     includes: string;
-    ignores: string; 
+    ignores: string;
     intro: string;
     alwaysAppendIncludes: boolean;
 }
@@ -48,7 +49,7 @@ interface Profile {
 interface AppState {
     activeProfile: string;
     profiles: { [key: string]: Profile };
-    defaultIgnores: string; 
+    defaultIgnores: string;
 }
 
 interface GenerationOptions {
@@ -56,14 +57,14 @@ interface GenerationOptions {
     ignores: string;
     intro: string;
     alwaysAppendIncludes: boolean;
-    defaultIgnores: string; 
+    defaultIgnores: string;
 }
 
 // --- DEFAULTS ---
 const DEFAULT_PROFILE: Profile = {
     name: 'Default',
     includes: '',
-    ignores: '', 
+    ignores: '',
     intro: '',
     alwaysAppendIncludes: false
 };
@@ -87,11 +88,11 @@ function parseIgnores(userIgnoreStr: string, defaultIgnoreStr: string) {
     const toLines = (s: string) =>
         s.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('#'));
 
-    const userLines   = toLines(userIgnoreStr);
+    const userLines = toLines(userIgnoreStr);
     const defaultLines = toLines(defaultIgnoreStr);
 
     // '!' prefix → keep (un-ignore); strip the '!' for matching
-    const userKeeps       = userLines.filter(s => s.startsWith('!')).map(s => s.slice(1));
+    const userKeeps = userLines.filter(s => s.startsWith('!')).map(s => s.slice(1));
     const userIgnoresOnly = userLines.filter(s => !s.startsWith('!'));
 
     // allIgnores = defaults + user ignores (keeps are NOT in here)
@@ -125,7 +126,7 @@ function isMatch(relPath: string, patterns: string[]): boolean {
  */
 function isMatchKeep(relPath: string, keepPatterns: string[]): boolean {
     if (keepPatterns.length === 0) return false;
-    const opts    = { dot: true };
+    const opts = { dot: true };
     const baseopts = { dot: true, matchBase: true };
     return keepPatterns.some(pattern => {
         // Bare filename (no path separators, no glob **) → matchBase
@@ -174,11 +175,11 @@ function shouldForceTraversal(
 // ─── ACTIVATE ─────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
-    
+
     // 1. LOAD STATE
     const saved = context.globalState.get<AppState>('contextGenState');
-    if (saved) { 
-        globalState = saved; 
+    if (saved) {
+        globalState = saved;
         if (!globalState.defaultIgnores) {
             globalState.defaultIgnores = FACTORY_DEFAULT_IGNORES;
         }
@@ -190,9 +191,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('context-generator.configure', () => {
             const panel = vscode.window.createWebviewPanel(
-                'contextGenConfig', 
-                'Context Generator Settings', 
-                vscode.ViewColumn.One, 
+                'contextGenConfig',
+                'Context Generator Settings',
+                vscode.ViewColumn.One,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
 
@@ -207,7 +208,7 @@ export function activate(context: vscode.ExtensionContext) {
                         await context.globalState.update('contextGenState', globalState);
                         vscode.window.showInformationMessage(`Settings Saved!`);
                         break;
-                    
+
                     case 'switchProfile':
                         if (globalState.profiles[msg.profileName]) {
                             globalState.activeProfile = msg.profileName;
@@ -262,13 +263,41 @@ export function activate(context: vscode.ExtensionContext) {
                         break;
                     }
 
+                    case 'zipFromSettings': {
+                        const workspaceFolders = vscode.workspace.workspaceFolders;
+                        if (!workspaceFolders) {
+                            vscode.window.showErrorMessage("No workspace open.");
+                            return;
+                        }
+
+                        updateProfile(msg.profileName, msg.data);
+                        globalState.defaultIgnores = msg.data.defaultIgnores;
+                        await context.globalState.update('contextGenState', globalState);
+
+                        const overrideOptions: GenerationOptions = {
+                            includes: msg.data.includes,
+                            ignores: msg.data.ignores,
+                            intro: msg.data.intro,
+                            alwaysAppendIncludes: msg.data.alwaysAppendIncludes,
+                            defaultIgnores: msg.data.defaultIgnores
+                        };
+
+                        vscode.commands.executeCommand(
+                            'context-generator.zipFolder',
+                            workspaceFolders[0].uri,
+                            [],
+                            overrideOptions
+                        );
+                        break;
+                    }
+
                     case 'generateFromSettings': {
                         const workspaceFolders = vscode.workspace.workspaceFolders;
                         if (!workspaceFolders) {
                             vscode.window.showErrorMessage("No workspace open.");
                             return;
                         }
-                        
+
                         updateProfile(msg.profileName, msg.data);
                         globalState.defaultIgnores = msg.data.defaultIgnores;
                         await context.globalState.update('contextGenState', globalState);
@@ -286,7 +315,7 @@ export function activate(context: vscode.ExtensionContext) {
                             workspaceFolders[0].uri,
                             [],
                             overrideOptions
-                        ); 
+                        );
                         break;
                     }
                 }
@@ -312,9 +341,9 @@ export function activate(context: vscode.ExtensionContext) {
             const targets = allUris && allUris.length > 0 ? allUris : (uri ? [uri] : []);
             if (targets.length === 0) return;
 
-            const options: GenerationOptions = optionsOverride ?? { 
-                ...globalState.profiles[globalState.activeProfile], 
-                defaultIgnores: globalState.defaultIgnores 
+            const options: GenerationOptions = optionsOverride ?? {
+                ...globalState.profiles[globalState.activeProfile],
+                defaultIgnores: globalState.defaultIgnores
             };
             const isFromSettingsBtn = !!optionsOverride;
 
@@ -323,7 +352,7 @@ export function activate(context: vscode.ExtensionContext) {
                 title: "Generating Context...",
                 cancellable: true
             }, async (progress, token) => {
-                
+
                 let combinedResult = options.intro ? `${options.intro}\n\n` : '';
                 const workspaceRoot = vscode.workspace.workspaceFolders
                     ? vscode.workspace.workspaceFolders[0].uri
@@ -336,14 +365,14 @@ export function activate(context: vscode.ExtensionContext) {
                     const stat = await vscode.workspace.fs.stat(target);
 
                     if (stat.type === vscode.FileType.Directory) {
-                        const effectiveIncludes = isFromSettingsBtn ? options.includes : ''; 
+                        const effectiveIncludes = isFromSettingsBtn ? options.includes : '';
                         combinedResult += await generateFolderStructure(
                             target, options.ignores, options.defaultIgnores, effectiveIncludes, token, workspaceRoot
                         );
                     } else if (stat.type === vscode.FileType.File) {
                         const relPath = path.relative(workspaceRoot.fsPath, target.fsPath).split(path.sep).join('/');
                         const ignored = isMatch(relPath, allIgnores);
-                        const kept   = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+                        const kept = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
 
                         if (!ignored || kept) {
                             const doc = await vscode.workspace.openTextDocument(target);
@@ -363,8 +392,81 @@ export function activate(context: vscode.ExtensionContext) {
                         combinedResult += appendResult;
                     }
                 }
-                
+
                 await showResult(combinedResult);
+            });
+        })
+    );
+
+    // 5. COMMAND: Zip Open Files
+    context.subscriptions.push(
+        vscode.commands.registerCommand('context-generator.zipOpenFiles', async () => {
+            const activeProfile = globalState.profiles[globalState.activeProfile];
+            await zipContextForTabs(activeProfile, globalState.defaultIgnores);
+        })
+    );
+
+    // 6. COMMAND: Zip Selected Folder
+    context.subscriptions.push(
+        vscode.commands.registerCommand('context-generator.zipFolder', async (
+            uri: vscode.Uri,
+            allUris?: vscode.Uri[],
+            optionsOverride?: GenerationOptions
+        ) => {
+            const targets = allUris && allUris.length > 0 ? allUris : (uri ? [uri] : []);
+            if (targets.length === 0) return;
+
+            const options: GenerationOptions = optionsOverride ?? {
+                ...globalState.profiles[globalState.activeProfile],
+                defaultIgnores: globalState.defaultIgnores
+            };
+            const isFromSettingsBtn = !!optionsOverride;
+
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "Zipping Context...",
+                cancellable: true
+            }, async (progress, token) => {
+
+                const workspaceRoot = vscode.workspace.workspaceFolders
+                    ? vscode.workspace.workspaceFolders[0].uri
+                    : targets[0];
+
+                const zip = new JSZip();
+                const { allIgnores, userKeeps } = parseIgnores(options.ignores, options.defaultIgnores);
+
+                for (const target of targets) {
+                    const stat = await vscode.workspace.fs.stat(target);
+
+                    if (stat.type === vscode.FileType.Directory) {
+                        const effectiveIncludes = isFromSettingsBtn ? options.includes : '';
+                        await zipFolderStructure(
+                            target, options.ignores, options.defaultIgnores, effectiveIncludes, token, workspaceRoot, zip
+                        );
+                    } else if (stat.type === vscode.FileType.File) {
+                        const relPath = path.relative(workspaceRoot.fsPath, target.fsPath).split(path.sep).join('/');
+                        const ignored = isMatch(relPath, allIgnores);
+                        const kept = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+
+                        if (!ignored || kept) {
+                            const data = await vscode.workspace.fs.readFile(target);
+                            zip.file(relPath, data);
+                        }
+                    }
+                }
+
+                if (options.alwaysAppendIncludes && !isFromSettingsBtn && options.includes.trim().length > 0) {
+                    await zipFolderStructure(
+                        workspaceRoot, options.ignores, options.defaultIgnores,
+                        options.includes, token, workspaceRoot, zip
+                    );
+                }
+
+                if (options.intro) {
+                    zip.file('_intro.md', new TextEncoder().encode(options.intro));
+                }
+
+                await saveZip(zip, `${path.basename(targets[0].fsPath)}-context.zip`);
             });
         })
     );
@@ -376,9 +478,9 @@ function updateProfile(name: string, data: any) {
     if (globalState.profiles[name]) {
         globalState.profiles[name] = {
             name,
-            includes:            data.includes,
-            ignores:             data.ignores,
-            intro:               data.intro,
+            includes: data.includes,
+            ignores: data.ignores,
+            intro: data.intro,
             alwaysAppendIncludes: data.alwaysAppendIncludes
         };
     }
@@ -390,15 +492,15 @@ async function generateContextForTabs(profile: Profile, defaultIgnoresStr: strin
 
     let content = profile.intro ? profile.intro + "\n\n" : "";
     content += "# Open Files Context\n\n";
-    
+
     let count = 0;
     for (const tab of tabs) {
         if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'file') {
-            const uri     = tab.input.uri;
+            const uri = tab.input.uri;
             const relPath = vscode.workspace.asRelativePath(uri, false);
 
             const ignored = isMatch(relPath, allIgnores);
-            const kept    = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+            const kept = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
 
             if (ignored && !kept) continue;
 
@@ -421,7 +523,7 @@ async function generateContextForTabs(profile: Profile, defaultIgnoresStr: strin
             }
         }
     }
-    
+
     if (count === 0 && (!profile.alwaysAppendIncludes || profile.includes.trim().length === 0)) {
         vscode.window.showWarningMessage("No matching open files found.");
         return;
@@ -430,14 +532,14 @@ async function generateContextForTabs(profile: Profile, defaultIgnoresStr: strin
 }
 
 async function generateFolderStructure(
-    rootDir: vscode.Uri, 
+    rootDir: vscode.Uri,
     userIgnoreStr: string,
     defaultIgnoreStr: string,
-    includeStr: string, 
+    includeStr: string,
     token: vscode.CancellationToken,
     workspaceRoot: vscode.Uri
 ): Promise<string> {
-    
+
     const includePatterns = includeStr
         .split('\n')
         .map(s => s.trim())
@@ -450,7 +552,7 @@ async function generateFolderStructure(
     // if recursion actually produced output (prevents phantom empty dirs).
     async function walk(dir: vscode.Uri, depth: number): Promise<[string, string]> {
         if (token.isCancellationRequested) return ['', ''];
-        
+
         let entries: [string, vscode.FileType][];
         try {
             entries = await vscode.workspace.fs.readDirectory(dir);
@@ -465,7 +567,7 @@ async function generateFolderStructure(
                 : a[1] === vscode.FileType.Directory ? -1 : 1
         );
 
-        let localTree    = '';
+        let localTree = '';
         let localContent = '';
 
         for (const [name, type] of entries) {
@@ -478,7 +580,7 @@ async function generateFolderStructure(
             if (type === vscode.FileType.Directory) {
                 // ── 1. Is this dir matched by any ignore pattern? ──────────────
                 const ignoredByDefault = isMatch(relPath, defaultLines);
-                const ignoredByUser    = isMatch(relPath, allIgnores); // includes defaults
+                const ignoredByUser = isMatch(relPath, allIgnores); // includes defaults
 
                 // ── 2. Is it explicitly kept? ──────────────────────────────────
                 const keptExplicitly = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
@@ -500,8 +602,8 @@ async function generateFolderStructure(
                 // ── 4. Include-pattern gate (optimization) ────────────────────
                 if (shouldEnter && includePatterns.length > 0) {
                     const isDirectMatch = isMatch(relPath, includePatterns);
-                    const isAncestor    = includePatterns.some(p => p.startsWith(relPath + '/'));
-                    const isInside      = includePatterns.some(p => {
+                    const isAncestor = includePatterns.some(p => p.startsWith(relPath + '/'));
+                    const isInside = includePatterns.some(p => {
                         const base = p.replace(/\/\*\*$/, '').replace(/\/\*$/, '');
                         return relPath.startsWith(base + '/') || relPath === base;
                     });
@@ -528,7 +630,7 @@ async function generateFolderStructure(
                 const ignored = isMatch(relPath, allIgnores);
                 // Use isMatchKeep so bare filenames (e.g. 'Transcoder.js') match
                 // against nested paths like 'transcoding/Transcoder.js'
-                const kept    = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+                const kept = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
 
                 if (ignored && !kept) continue;
 
@@ -538,14 +640,14 @@ async function generateFolderStructure(
                 }
 
                 localTree += `${"│   ".repeat(depth)}├── ${name}\n`;
-                
+
                 try {
                     const data = await vscode.workspace.fs.readFile(fullUri);
                     if (data.indexOf(0) !== -1) {
                         localContent += `\n### ${relPath}\n(Binary file skipped)\n`;
                     } else {
                         const text = new TextDecoder().decode(data);
-                        const ext  = path.extname(name).slice(1).toLowerCase();
+                        const ext = path.extname(name).slice(1).toLowerCase();
                         localContent += `\n### ${relPath}\n\`\`\`${ext || 'text'}\n${text}\n\`\`\`\n`;
                     }
                 } catch {
@@ -558,7 +660,7 @@ async function generateFolderStructure(
     }
 
     const [rootTree, rootContent] = await walk(rootDir, 0);
-    
+
     if (rootContent.trim().length > 0) {
         return rootTree + "\n" + rootContent;
     }
@@ -574,7 +676,7 @@ async function showResult(content: string) {
 
 function getWebviewContent(state: AppState): string {
     const active = state.profiles[state.activeProfile];
-    const profileOptions = Object.keys(state.profiles).map(name => 
+    const profileOptions = Object.keys(state.profiles).map(name =>
         `<option value="${name}" ${name === state.activeProfile ? 'selected' : ''}>${name}</option>`
     ).join('');
 
@@ -647,7 +749,8 @@ function getWebviewContent(state: AppState): string {
 
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button id="saveBtn" style="flex:1;">💾 Save Settings</button>
-                <button id="genBtn" style="flex:1;">⚡ Generate From Settings</button>
+                <button id="genBtn" style="flex:1;">⚡ Gen Markdown</button>
+                <button id="zipBtn" style="flex:1; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);">📦 Gen Zip</button>
             </div>
         </div>
 
@@ -715,9 +818,170 @@ function getWebviewContent(state: AppState): string {
                     vscode.postMessage({ type: 'resetDefaults' });
                 }
             });
+
+            document.getElementById('zipBtn').addEventListener('click', () => {
+                vscode.postMessage({ 
+                    type: 'zipFromSettings', 
+                    profileName: profileSelect.value, 
+                    data: getData() 
+                });
+            });
+            
         </script>
     </body>
     </html>`;
 }
 
-export function deactivate() {}
+async function saveZip(zip: JSZip, defaultFilename: string) {
+    const zipContent = await zip.generateAsync({ type: 'uint8array' });
+
+    // Suggest a save location
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const defaultUri = workspaceFolders
+        ? vscode.Uri.joinPath(workspaceFolders[0].uri, defaultFilename)
+        : vscode.Uri.file(defaultFilename);
+
+    const saveUri = await vscode.window.showSaveDialog({
+        defaultUri: defaultUri,
+        filters: { 'ZIP Archive': ['zip'] },
+        title: 'Save Generated Context Zip'
+    });
+
+    if (saveUri) {
+        await vscode.workspace.fs.writeFile(saveUri, zipContent);
+        vscode.window.showInformationMessage(`Zip saved to ${path.basename(saveUri.fsPath)}`);
+    }
+}
+
+async function zipContextForTabs(profile: Profile, defaultIgnoresStr: string) {
+    const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs);
+    const { allIgnores, userKeeps } = parseIgnores(profile.ignores, defaultIgnoresStr);
+
+    const zip = new JSZip();
+    let count = 0;
+
+    for (const tab of tabs) {
+        if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'file') {
+            const uri = tab.input.uri;
+            const relPath = vscode.workspace.asRelativePath(uri, false);
+
+            const ignored = isMatch(relPath, allIgnores);
+            const kept = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+
+            if (ignored && !kept) continue;
+
+            const data = await vscode.workspace.fs.readFile(uri);
+            zip.file(relPath, data);
+            count++;
+        }
+    }
+
+    if (profile.alwaysAppendIncludes && profile.includes.trim().length > 0) {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders) {
+            const tokenSource = new vscode.CancellationTokenSource();
+            await zipFolderStructure(
+                workspaceFolders[0].uri, profile.ignores, defaultIgnoresStr,
+                profile.includes, tokenSource.token, workspaceFolders[0].uri, zip
+            );
+        }
+    }
+
+    if (count === 0 && (!profile.alwaysAppendIncludes || profile.includes.trim().length === 0)) {
+        vscode.window.showWarningMessage("No matching open files found.");
+        return;
+    }
+
+    if (profile.intro) {
+        zip.file('_intro.md', new TextEncoder().encode(profile.intro));
+    }
+
+    await saveZip(zip, 'open-files-context.zip');
+}
+
+async function zipFolderStructure(
+    rootDir: vscode.Uri,
+    userIgnoreStr: string,
+    defaultIgnoreStr: string,
+    includeStr: string,
+    token: vscode.CancellationToken,
+    workspaceRoot: vscode.Uri,
+    zip: JSZip
+): Promise<void> {
+
+    const includePatterns = includeStr
+        .split('\n')
+        .map(s => s.trim())
+        .filter(s => s.length > 0 && !s.startsWith('#'));
+
+    const { allIgnores, userKeeps, defaultLines } = parseIgnores(userIgnoreStr, defaultIgnoreStr);
+
+    async function walk(dir: vscode.Uri, depth: number) {
+        if (token.isCancellationRequested) return;
+
+        let entries: [string, vscode.FileType][];
+        try {
+            entries = await vscode.workspace.fs.readDirectory(dir);
+        } catch {
+            return;
+        }
+
+        for (const [name, type] of entries) {
+            const fullUri = vscode.Uri.joinPath(dir, name);
+            const relPath = path
+                .relative(workspaceRoot.fsPath, fullUri.fsPath)
+                .split(path.sep)
+                .join('/');
+
+            if (type === vscode.FileType.Directory) {
+                const ignoredByDefault = isMatch(relPath, defaultLines);
+                const ignoredByUser = isMatch(relPath, allIgnores);
+                const keptExplicitly = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+
+                let shouldEnter: boolean;
+
+                if (!ignoredByUser) {
+                    shouldEnter = true;
+                } else if (keptExplicitly) {
+                    shouldEnter = true;
+                } else {
+                    shouldEnter = shouldForceTraversal(relPath, userKeeps, ignoredByDefault);
+                }
+
+                if (shouldEnter && includePatterns.length > 0) {
+                    const isDirectMatch = isMatch(relPath, includePatterns);
+                    const isAncestor = includePatterns.some(p => p.startsWith(relPath + '/'));
+                    const isInside = includePatterns.some(p => {
+                        const base = p.replace(/\/\*\*$/, '').replace(/\/\*$/, '');
+                        return relPath.startsWith(base + '/') || relPath === base;
+                    });
+
+                    if (!isDirectMatch && !isAncestor && !isInside) {
+                        shouldEnter = false;
+                    }
+                }
+
+                if (!shouldEnter) continue;
+                await walk(fullUri, depth + 1);
+
+            } else if (type === vscode.FileType.File) {
+                const ignored = isMatch(relPath, allIgnores);
+                const kept = userKeeps.length > 0 && isMatchKeep(relPath, userKeeps);
+
+                if (ignored && !kept) continue;
+                if (includePatterns.length > 0 && !isMatch(relPath, includePatterns)) continue;
+
+                try {
+                    const data = await vscode.workspace.fs.readFile(fullUri);
+                    zip.file(relPath, data);
+                } catch {
+                    // Skip unreadable files
+                }
+            }
+        }
+    }
+
+    await walk(rootDir, 0);
+}
+
+export function deactivate() { }
